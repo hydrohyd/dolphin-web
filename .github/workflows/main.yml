@@ -1,48 +1,99 @@
-name: Build Dolphin Emulator for WASM (No fmt, With Submodules, Artifact Upload)
+name: Build Dolphin WebAssembly (experimental)
 
 on:
+  workflow_dispatch:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
   pull_request:
-    branches: [ main, master ]
+    branches: [main, master]
 
 jobs:
   build-wasm:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
+
     steps:
-      - name: Checkout source (with submodules)
+      - name: Checkout source and submodules
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
 
       - name: Install Emscripten
         uses: mymindstorm/setup-emsdk@v14
         with:
-          version: 3.1.55 # Use the version you need
+          version: 3.1.55
 
-      - name: Install additional dependencies
+      - name: Install build tools
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build pkg-config python3-pip
-      - name: Remove fmt from all CMakeLists.txt
+          cmake --version
+          ninja --version
+          emcc --version
+
+      - name: Configure experimental WebAssembly build
+        shell: bash
         run: |
-          find . -name 'CMakeLists.txt' -exec sed -i '/fmt/d' {} +
-      - name: Configure WASM build with Emscripten
-        env:
-          EMCC_CMAKE: emcmake
+          set -o pipefail
+          emcmake cmake -S . -B build-wasm -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DENABLE_GENERIC=ON \
+            -DENABLE_QT=OFF \
+            -DENABLE_NOGUI=ON \
+            -DENABLE_TESTS=OFF \
+            -DENABLE_VULKAN=OFF \
+            -DENABLE_LLVM=OFF \
+            -DENABLE_AUTOUPDATE=OFF \
+            -DENABLE_ANALYTICS=OFF \
+            -DENABLE_ALSA=OFF \
+            -DENABLE_PULSEAUDIO=OFF \
+            -DENABLE_CUBEB=OFF \
+            2>&1 | tee configure-wasm.log
+
+      - name: Build Dolphin
+        if: success()
+        shell: bash
         run: |
-          mkdir build-wasm
-          cd build-wasm
-          emcmake cmake .. -DENABLE_GENERIC=ON -DCMAKE_BUILD_TYPE=Release
-      - name: Build Dolphin WASM
+          set -o pipefail
+          cmake --build build-wasm --parallel "$(nproc)" \
+            2>&1 | tee build-wasm.log
+
+      - name: Collect build outputs and diagnostics
+        if: always()
+        shell: bash
         run: |
-          cd build-wasm
-          emmake make -j$(nproc)
-      - name: Upload WASM artifacts
+          mkdir -p build-report
+
+          cp configure-wasm.log build-report/ 2>/dev/null || true
+          cp build-wasm.log build-report/ 2>/dev/null || true
+
+          if [ -d build-wasm ]; then
+            find build-wasm -type f \( \
+              -name '*.wasm' -o \
+              -name '*.js' -o \
+              -name '*.data' -o \
+              -name '*.html' -o \
+              -name '*.worker.js' \
+            \) -print -exec cp --parents '{}' build-report/ \;
+          fi
+
+          echo '--- candidate browser outputs ---' \
+            > build-report/output-summary.txt
+
+          find build-report -type f \( \
+            -name '*.wasm' -o \
+            -name '*.js' -o \
+            -name '*.data' -o \
+            -name '*.html' -o \
+            -name '*.worker.js' \
+          \) -print >> build-report/output-summary.txt
+
+      - name: Upload build report and generated files
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dolphin-wasm
-          path: |
-            build-wasm/**/*.wasm
-            build-wasm/**/*.js
-            build-wasm/**/*.html
+          name: dolphin-wasm-build-report
+          path: build-report/
+          if-no-files-found: warn
+          retention-days: 7
