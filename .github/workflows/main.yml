@@ -1,3 +1,4 @@
+
 name: Build Dolphin WebAssembly (experimental)
 
 on:
@@ -49,14 +50,16 @@ jobs:
             -DENABLE_ALSA=OFF \
             -DENABLE_PULSEAUDIO=OFF \
             -DENABLE_CUBEB=OFF \
+            -DWITH_RUNTIME_CPU_DETECTION=OFF \
+            -DWITH_NATIVE_INSTRUCTIONS=OFF \
             2>&1 | tee configure-wasm.log
 
       - name: Build Dolphin
-        if: success()
         shell: bash
         run: |
           set -o pipefail
-          cmake --build build-wasm --parallel "$(nproc)" \
+          cmake --build build-wasm \
+            --parallel "$(nproc)" \
             2>&1 | tee build-wasm.log
 
       - name: Collect build outputs and diagnostics
@@ -78,7 +81,7 @@ jobs:
             \) -print -exec cp --parents '{}' build-report/ \;
           fi
 
-          echo '--- candidate browser outputs ---' \
+          echo '--- Candidate browser outputs ---' \
             > build-report/output-summary.txt
 
           find build-report -type f \( \
